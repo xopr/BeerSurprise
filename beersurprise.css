@@ -1,0 +1,188 @@
+body
+{
+    overflow-y: auto;
+    background-size: cover;
+    background-position: center;
+    background-attachment: fixed;
+    font-family: sans-serif;
+    color: #FCFEFD;
+    min-height: 100%;
+    background-image: url('resources/background.jpg');
+    padding-top: 2.5em;
+    background-color: #223022;
+}
+
+a:active,
+a:visited
+{
+    color:rgb(0, 255, 128);
+}
+
+#warning
+{
+    position:fixed;
+    top:0;
+    left:0;
+    right:0;
+    padding: 0.75em;
+    background-color: rgb(255, 224, 166);
+    color: black;
+    border-bottom: 2px solid orange;
+    font-family: sans-serif;
+}
+
+.overlay
+{
+    position: fixed;
+    z-index: 1000;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba( 0,0,0,0.7);
+}
+
+.overlay video
+{
+    position: absolute;
+    width: 80vmin;
+    height: 80vmin;
+    border-radius: 1cm;
+    top: 50%;
+    left: 50%;
+    transform: translate( -50%, -50% );
+    object-fit: cover;    
+}
+
+.overlay .scanner
+{
+    position: absolute;
+    width: 80vmin;
+    border: 1px solid red;
+    top: 50%;
+    left: 50%;
+    transform: translate( -50%, -50% );
+}
+
+
+section
+{
+    margin: 0 2em;
+    padding: 1em;
+    background-color: rgba(155,155,155,0.2);
+    text-shadow: 1px 1px #131;
+}
+
+section.collapse > h3
+{
+    cursor: pointer;
+}
+
+section.collapse > div
+{
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.15s;
+}
+
+section.collapse:hover > div
+{
+    max-height: 1000px;
+}
+
+#newgroup
+{
+    display: none;
+}
+
+.group
+{
+    padding-top: 1em;
+}
+
+.group.incomplete
+{
+    
+}
+
+input:not([type="submit"]), button
+{
+    max-width: 45vw;
+
+    border-color: rgba(0,0,0,0.1);
+    border-width: 1px;
+    border-bottom-color: rgba(255,255,255,0.1);
+    border-right-color: rgba(255,255,255,0.1);
+    border-radius: 3px;
+    height: 2.5rem;
+    line-height: 2.5rem;
+    outline: none;    
+}
+
+input[type="submit"],button
+{
+    border-color: rgba(255,255,255,0.1);
+    border-width: 1px;
+    border-bottom-color: rgba(0,0,0,0.1);
+    border-right-color: rgba(0,0,0,0.1);
+    border-radius: 3px;
+    background-color: rgb(250,250,250);
+    line-height: 2.5rem;
+    font-weight: bold;
+}
+
+button:not([disabled]):hover,
+button:not([disabled]):focus,
+button:not([disabled]):active,
+input:not([disabled]):hover,
+input:not([disabled]):focus,
+input:not([disabled]):active
+{
+    background-color: #eee;
+}
+
+#account.attention *
+{
+    animation-duration: 6s;
+    animation-iteration-count: infinite;
+    animation-direction: normal;
+
+}
+#account.attention #username
+{
+    animation-name: attention1;
+}
+#account.attention #password
+{
+    animation-name: attention2;
+}
+#account.attention #login,
+#account.attention #register
+{
+    animation-name: attention3;
+}
+
+@keyframes attention1
+{
+    from {outline: 0 dashed rgb(255, 0, 128)}
+
+    17% {outline: 0em dashed rgb(255, 0, 128)}
+    33% {outline: 0.3em dashed rgb(255, 0, 128)}
+    50% {outline: 0 dashed rgb(255, 0, 128)}
+}
+@keyframes attention2
+{
+    from {outline: 0 dashed rgb(255, 0, 128)}
+
+    33% {outline: 0 dashed rgb(255, 0, 128)}
+    50% {outline: 0.3em dashed rgb(255, 0, 128)}
+    67% {outline: 0 dashed rgb(255, 0, 128)}
+}
+@keyframes attention3
+{
+    from {outline: 0 dashed rgb(255, 0, 128)}
+
+    50% {outline: 0 dashed rgb(255, 0, 128)}
+    67% {outline: 0.3em dashed rgb(255, 0, 128)}
+    to {outline: 0 dashed rgb(0, 255, 128)}
+}

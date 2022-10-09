@@ -1,0 +1,37 @@
+{
+    "state.-1": "Misvormde data",
+    "state.0": "Geen data",
+    "state.1": "Niet genoeg bier om door te gaan",
+    "state.13": "Ongeldig wachtwoord",
+    "state.23": "Gebruikersnaam bestaat al",
+    "state.42": "Ok",
+    "state.666": "Dubbele invoer",
+
+    "password_updated": "Wachtwoord gewijzigd!",
+    "account_created": "Account aangemaakt!",
+    "unknown_success": "Onbekend succes?",
+    "link_copied": "Link op klembord!\nverwijder laatste gedeelte om anoniem te verzenden.",
+    "copy_link_failed": "Link kopiëren gefaald",
+
+    "login":"Login",
+    "register":"Register",
+    "change_pw":"Change password",
+    "add_group":"Add group",
+    "new_group_name":"New group name",
+    "copy_invite_link":"Share link",
+    "add_beer": "Add beer",
+    "username": "username",
+    "password":"password",
+    "barcode": "barcode",
+    "beer_name": "beer name",
+    "number_of_unique_beers": "number of unique beers",
+    "group_name": "group name",
+
+    "register_username": "Do you really want to register '{username}'?",
+    "buy_in_bulk": "Buy all marked beers times {amount}",
+    "unknown": "UNKNOWN",
+    "join_as_new_user": "Enter (new) username and password and click on Login or Register",
+    "refresh_group": "refresh group",
+    "scan_barcode": "scan barcode",
+    "scanned_beer": "SCANNED BEER"
+}
