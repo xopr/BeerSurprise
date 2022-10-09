@@ -245,7 +245,6 @@ function t( name, target/*by reference object*/, values )
         {
             if ( Object.keys(nls).length )
                 console.log( `No translation for ${name}` );
-            // TODO: store values!
             target.name = name;
             addNlsQueue( target, values );
             
@@ -278,9 +277,11 @@ function loadNls()
         while ( item = nlsQueue.shift() )
         {
             const [target, values] = item;
+            const nlsName = nls[target.name] && nls[target.name].replace( /\{(.*?)\}/g, (_,t) => { return values[t] } );
+
             const key = Object.keys( target )[0];
-            target[key][key] = nls[target.name]||target.name;
-            if ( !nls[target.name])
+            target[key][key] = nlsName||target.name;
+            if ( !nlsName)
                 console.log( `No translation for ${target.name}` );
         }
 

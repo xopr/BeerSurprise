@@ -153,7 +153,6 @@ function groupdata($db, $post)
         ini_set('display_errors', 1);
         $result[ "debug" ] = array( );
 
-        // TODO: figure out if we can do a group by
         $userBeers = array();
         // empty beer user: 
         $stm = $db->prepare('SELECT user, beer FROM groupusers LEFT JOIN usergroupbeers ON groupusers.id = usergroupbeers.groupuserid WHERE guid = ? ORDER BY usergroupbeers.rowid');
