@@ -136,14 +136,15 @@ if ( $_SERVER["REQUEST_METHOD"] == "POST")
         });
     }
 
-    // BarcodeDetector polyfill
     if (!("BarcodeDetector" in window))
+        loadBarcodeDetectorPolyfill();
+
+    async function loadBarcodeDetectorPolyfill()
     {
-        require("/resources/zbar-wasm.js").then( () => {
-            return require("/resources//barcode-detector-polyfill.js");
-        }).then( () => {
-            window.BarcodeDetector = barcodeDetectorPolyfill.BarcodeDetectorPolyfill;
-        });
+        // BarcodeDetector polyfill
+        await require("/resources/zbar-wasm.js");
+        await require("/resources//barcode-detector-polyfill.js");
+        window.BarcodeDetector = barcodeDetectorPolyfill.BarcodeDetectorPolyfill;
     }
 </script>
 

@@ -24,10 +24,12 @@ async function startScan()
     const formats = intersectArray(  await BarcodeDetector.getSupportedFormats(), ["ean_8", "ean_13", "ean_13+2", "ean_13+5", "isbn_10", "isbn_13", "isbn_13+2", "isbn_13+5", "upc_a", "upc_e"], true );
     const barcodeDetector = new BarcodeDetector({formats});
 
-    // Start camera
-    return navigator.mediaDevices.getUserMedia( {
-      video: {facingMode: "environment", torch: true, focusMode: "continuous"}
-    } ).then( ( mediaStream ) => {
+    try
+    {
+        const mediaStream = await navigator.mediaDevices.getUserMedia( {
+            video: {facingMode: "environment", torch: true, focusMode: "continuous"}
+          } );
+
         // Create video overlay
         const overlay = document.createElement("div");
         overlay.className = "overlay";
@@ -36,7 +38,6 @@ async function startScan()
             const closeButton = overlay.appendChild( document.createElement("button") );
             closeButton.textContent ="close";
             t("close", {textContent:closeButton});
-
 
             closeButton.addEventListener( "click", ( _event ) =>
             {
@@ -47,13 +48,10 @@ async function startScan()
         const videoPromise = new Promise( ( resolve, reject ) => {
             const video = overlay.appendChild( document.createElement("video") );
             video.srcObject = mediaStream;
-            //video.onload = resolve;
             video.onplay = resolve;
             video.onerror = reject;
             video.autoplay = true;
-            // onloadstart
         });
-
 
         overlay.appendChild( document.createElement("div") ).className = "scanner";
 
@@ -66,10 +64,19 @@ async function startScan()
         
         // https://developer.chrome.com/blog/chrome-66-deprecations/
         // imageCapture = new ImageCapture(track).setOptions
-        track.applyConstraints({ advanced: [{torch: true, focusMode: "continuous"}]}).catch(e => console.log(e));
-
-        function detect( video )
+        try
         {
+            await track.applyConstraints({ advanced: [{torch: true, focusMode: "continuous"}]});
+        }
+        catch (e)
+        {
+            console.log(e);
+        }
+
+        async function detect( videoPromise )
+        {
+            video = (await videoPromise).target;
+
             return new Promise( (resolve, reject) => {
                 function renderFrame()
                 {
@@ -85,30 +92,33 @@ async function startScan()
                     if ( !barcodes.length )
                         requestAnimationFrame(renderLoop);
                     else
-                        resolve( barcodes );
+                        resolve( barcodes[0].rawValue );
                 })();
             })
         }
 
-        const scanPromise = videoPromise.then( ( event ) => { return detect( event.target )} ).then( ( barcodes ) => {
-            return barcodes[0].rawValue;
-        });
+        const scanPromise = detect( videoPromise );
+        const barcode = await Promise.race( [scanPromise, closePromise] );
 
-        return Promise.race( [scanPromise, closePromise] ).then( ( barcode ) => {
-            // Cleanup
-            overlay.remove();
-            mediaStream.getTracks().forEach(function(track) {
-                track.stop();
-              });
-
-            return barcode;
-        });;
-    } ).catch( (error) => {
+        // Cleanup
+        overlay.remove();
+        mediaStream.getTracks().forEach(function(track) {
+            track.stop();
+            });
+        return barcode;
+    }
+    catch ( error )
+    {
         if ( error.name === "NotAllowedError" )
             warn( t( "please_enable_camera_permissions", {textContent: $("#warning")}) );
         else
             console.error( error );
-    } );
+        return null;
+    }
+}
+
+async function enableScanner( _event )
+{
 }
 
 // SHA-512 hash function
@@ -122,7 +132,8 @@ async function hash( _data, _salt )
     const SALT = "BEERSURPRISE";
     const data = _data + ( _salt ? SALT + _salt : "" );
 
-    return crypto.subtle.digest( "SHA-512", new TextEncoder().encode( data ) ).then( encode64 );
+    const hash = await crypto.subtle.digest( "SHA-512", new TextEncoder().encode( data ) );
+    return encode64( hash );
 }
 
 // Base64 encode of arraybuffer
@@ -156,7 +167,7 @@ function decodeState( _state )
     return ( t(`state.${_state}`) );
 }
 
-function handleCredentials( _passhash, _command )
+async function handleCredentials( _passhash, _command )
 {
     const storedPassHash = localStorage.getItem( "passhash" );
 
@@ -171,23 +182,22 @@ function handleCredentials( _passhash, _command )
     {
         case "login":
             localStorage.setItem( "passhash", _passhash );
-            serverRequest( "groupdata", null ).then( handleResponse );
+            handleResponse( await serverRequest( "groupdata", null ) );
             break;
 
         case "register":
             localStorage.removeItem( "passhash" );
-            serverRequest( "password", _passhash ).then( handleResponse );
+            handleResponse( await serverRequest( "password", _passhash ) );
             break;
 
         default:
             // Change password
-            serverRequest( "password", _passhash ).then( handleResponse );
+            handleResponse( await serverRequest( "password", _passhash ) );
             break;
-
     }
 }
 
-function submit( event )
+async function submit( event )
 {
     const username = $( "#username" );
     const password = $( "#password" );
@@ -201,10 +211,8 @@ function submit( event )
         return false;
 
     // hash (+salt) password
-    hash( password.value, username.value ).then( ( passhash ) =>
-    {
-        handleCredentials( passhash, command );
-    } );
+    const passhash = await hash( password.value, username.value );
+    handleCredentials( passhash, command );
 
     // Clear password (and replace with the salted hash)
     password.value = "";
@@ -215,17 +223,14 @@ function submit( event )
 
 let g_userhash = null;
 
-function updateUser( _event )
+async function updateUser( _event )
 {
     const newUsername = _event.target.value;
     if ( localStorage.getItem( "username" ) !== newUsername )
     {
         localStorage.removeItem( "passhash" );
         localStorage.setItem( "username", newUsername );
-        hash( newUsername ).then( ( userhash ) =>
-        {
-            g_userhash = userhash;
-        } );
+        g_userhash = await hash( newUsername );
     }
 }
 
@@ -261,43 +266,37 @@ function addNlsQueue( target, values )
     // TODO: set a timeout in case the loading mechanism crossed the queue
 }
 
-function loadNls()
+async function loadNls()
 {
     // Global NLS struct
     window.nlsQueue = [];
     window.nls = {};
 
-    fetch("nls/nl-nl.json")
-    .then((response) => response.json())
-    .then((nls) => {
-        // Store globally for the dynamic elements
-        window.nls = nls;
+    // Store globally for the dynamic elements
+    const nls = window.nls = await (await fetch("nls/nl-nl.json")).json();
 
-        let target;
-        while ( item = nlsQueue.shift() )
+    while ( item = nlsQueue.shift() )
+    {
+        const [target, values] = item;
+        const nlsName = nls[target.name] && nls[target.name].replace( /\{(.*?)\}/g, (_,t) => { return values[t] } );
+
+        const key = Object.keys( target )[0];
+        target[key][key] = nlsName||target.name;
+        if ( !nlsName)
+            console.log( `No translation for ${target.name}` );
+    }
+
+    $( '[data-placeholder],[data-value],[data-text-content]' ).forEach( node => {
+        for ( let attribute in node.dataset )
         {
-            const [target, values] = item;
-            const nlsName = nls[target.name] && nls[target.name].replace( /\{(.*?)\}/g, (_,t) => { return values[t] } );
-
-            const key = Object.keys( target )[0];
-            target[key][key] = nlsName||target.name;
-            if ( !nlsName)
-                console.log( `No translation for ${target.name}` );
+            const name = node.dataset[attribute];
+            if ( name in nls )
+                node[attribute] = nls[name];
         }
-
-        $( '[data-placeholder],[data-value],[data-text-content]' ).forEach( node => {
-            for ( let attribute in node.dataset )
-            {
-                const name = node.dataset[attribute];
-                if ( name in nls )
-                    node[attribute] = nls[name];
-            }
-        } );
-    });
-
+    } );
 }
 
-function initialize( _event )
+async function initialize( _event )
 {
     loadNls();
 
@@ -311,31 +310,28 @@ function initialize( _event )
     username.value = localStorage.getItem( "username" );
 
     // Store user hash (volatile)
-    hash( username.value ).then( ( userhash ) =>
+    g_userhash = await hash( username.value );
+
+    // If we have a stored passhash, try and login (get user groups)
+    if ( localStorage.getItem( "passhash" ) )
     {
-        g_userhash = userhash;
-
-        // If we have a stored passhash, try and login (get user groups)
-        if ( localStorage.getItem( "passhash" ) )
+        // if ( location.hash )
+        // {
+        //     joinGroup( ...location.hash.slice( 1 ).split( "/" ) );
+        // }
+        // else
         {
-            // if ( location.hash )
-            // {
-            //     joinGroup( ...location.hash.slice( 1 ).split( "/" ) );
-            // }
-            // else
-            {
-                console.log( "autologin" );
-                // Empty group data will trigger sequential group detail calls
-                serverRequest( "groupdata", null ).then( handleResponse );
-            }
-        } else if ( location.hash )
-        {
-            // Highlight login/register inputs for people not yet logged in
-            $("#account").classList.toggle( "attention", true );
-            warn( t("join_as_new_user",{textContent: $("#warning")}), 300 );
+            console.log( "autologin" );
+            // Empty group data will trigger sequential group detail calls
+            handleResponse( await serverRequest( "groupdata", null ) );
         }
-
-    } );
+    }
+    else if ( location.hash )
+    {
+        // Highlight login/register inputs for people not yet logged in
+        $("#account").classList.toggle( "attention", true );
+        warn( t("join_as_new_user",{textContent: $("#warning")}), 300 );
+    }
 
     const groups = JSON.parse( localStorage.getItem( "groups" ) || "[]" );
     groups.forEach( setGroup );
@@ -364,7 +360,7 @@ function flagBeers( _guid, _beers, _users )
     span.dataset.textContent = nls.bulk_buy;
 }
 
-function handleResponse( [ _responseData, _requestData ] )
+async function handleResponse( [ _responseData, _requestData ] )
 {
     switch ( _requestData.command )
     {
@@ -450,7 +446,7 @@ function handleResponse( [ _responseData, _requestData ] )
                         warn( t("account_created",{textContent: $("#warning")}) );
                         // TODO: send login request or just load groups
                         // Empty group data will trigger sequential group detail calls
-                        serverRequest( "groupdata", null ).then( handleResponse );
+                        handleResponse( await serverRequest( "groupdata", null ) );
                 }
                 else
                     console.warn( t("unknown_success",{textContent: $("#warning")}) );
@@ -492,24 +488,18 @@ async function serverRequest( _command, _data )
     }
 
     // Clean up server response and parse as JSON
-    return fetch( ".", options )
-        /*.then( res => res.json( ) )*/
-        .then( res => res.text( ) )
-        .then( res =>
-        {
-            try
-            {
-                // register
-                res = JSON.parse( res );
-            }
-            catch( e )
-            {
-                console.warn( "could not parse as json", res );
-                res = { state: STATE.MALFOAMED };
-            }
-
-            return [ res, data ];
-        } );
+    
+    try
+    {
+        // register
+        const response = await (await fetch( ".", options )).json( );
+        return [ response, data ];
+    }
+    catch( e )
+    {
+        console.warn( "could not parse as json", response );
+        return [ { state: STATE.MALFOAMED }, data ];
+    }
 }
 
 function getOrCreateGroup( _groupName, _guid )
@@ -539,7 +529,7 @@ function getOrCreateGroup( _groupName, _guid )
     return group;   
 }
 
-function joinGroup(guid, token, name)
+async function joinGroup(guid, token, name)
 {
     if ( !guid )
         return;
@@ -550,16 +540,17 @@ function joinGroup(guid, token, name)
         token: token
     };
 
-    serverRequest( "groupdata", group ).then( ( data ) => {
-        const unknown = nls.unknown || "UNKNOWN";
-        // Add the group locally, no roundtrip
-        const responseState = data[0].state;
-        if ( responseState === STATE.CHEERS || responseState === STATE.INSUFFICIENT_BEER )
-            addGroup( name ? decodeURI( name ) : unknown, guid, true );
-        handleResponse( data );
-        // Remove hash
-        window.location.replace(window.location.protocol + "//" + window.location.host);
-    } )
+    const data = await serverRequest( "groupdata", group );
+
+    const unknown = nls.unknown || "UNKNOWN";
+    // Add the group locally, no roundtrip
+    const responseState = data[0].state;
+    if ( responseState === STATE.CHEERS || responseState === STATE.INSUFFICIENT_BEER )
+        addGroup( name ? decodeURI( name ) : unknown, guid, true );
+    handleResponse( data );
+
+    // Remove hash
+    window.location.replace(window.location.protocol + "//" + window.location.host);
 }
 
 function addGroup( _groupName, _guid, _skipServerCall )
@@ -599,19 +590,11 @@ async function updateGroup( _group )
     const myGroup = Object.assign( {}, _group );
     delete myGroup.name;
 
-    /*
-    const barcodes = Promise.all( myGroup.beers.map( beer => hash( beer.barcode ) ) );
-    barcodes.then( codes => {
-        myGroup.beers = codes;
-        serverRequest( "groupdata", myGroup ).then( handleResponse );
-    } );
-    */
-
     if ( myGroup.beers )
         myGroup.beers = await Promise.all( myGroup.beers.map( beer => hash( beer.barcode ) ) );
     else
         myGroup.beers = [];
-    return serverRequest( "groupdata", myGroup ).then( handleResponse );
+    return handleResponse( await serverRequest( "groupdata", myGroup ) );
 }
 
 function setGroup( _group )
@@ -659,7 +642,7 @@ function setGroup( _group )
         const inviteLink = groupDiv.appendChild( document.createElement( "button" ) )
         t("copy_invite_link", {textContent:inviteLink});
 
-        inviteLink.addEventListener( "click", ( _event ) =>
+        inviteLink.addEventListener( "click", async ( _event ) =>
         {
             //https://beersurprise.glitchentertainment.nl/#3badba1b-dd8a-4d90-a0c4-45e991c84b8b/bOcIDykUl3wF2wIa8SH7Gycek2howvmtGX4X45l2WK683VxKeI6U1+JJuhNsRPmtF2w45u73JMcXQkWrFl40gA==/known        
             
@@ -670,13 +653,13 @@ function setGroup( _group )
                  "/" + g_userhash +
                  "/" + encodeURI( _group.name );
 
-            navigator.clipboard.writeText( uri ).then( () => 
+            try
             {
+                await navigator.clipboard.writeText( uri );
                 warn( t("link_copied",{textContent: $("#warning")}), 5 );
-            }, () => 
-            {
+            } catch {
                 warn( t("copy_link_failed",{textContent: $("#warning")}) );
-            });
+            }
         } );
 
         const refresh = groupDiv.appendChild( document.createElement( "button" ) )
