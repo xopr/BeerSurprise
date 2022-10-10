@@ -97,7 +97,7 @@ section.collapse:hover > div
 
 .group
 {
-    padding-top: 1em;
+    padding-top: 2.5em;
 }
 
 .group.incomplete
@@ -139,6 +139,16 @@ input:not([disabled]):focus,
 input:not([disabled]):active
 {
     background-color: #eee;
+}
+
+input:disabled
+{
+    background-color: rgba(239, 239, 239, 0.7);
+}
+
+input:disabled::placeholder
+{
+    color: white;
 }
 
 #account.attention *

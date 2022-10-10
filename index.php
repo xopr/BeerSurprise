@@ -161,7 +161,7 @@ if ( $_SERVER["REQUEST_METHOD"] == "POST")
 <body>
 <div id="warning" style="display:none">Warning goes here...</div>
 <section>
-<form id="account" type="GET" action=".">
+<form id="account" type="POST" action=".">
 <input id="username" name="username" type="text" data-placeholder="username" placeholder="Username">
 <input id="password" name="password" type="password" data-placeholder="password" placeholder="Password (hashed)" autocomplete="off">
 <input id="login" type="submit" data-value="login" value="login" onclick="this.form.command=this.dataset.value;">
