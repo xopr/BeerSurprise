@@ -1,3 +1,4 @@
+///// Helper functions /////
 function $( _selector, _parent )
 {
     const node = (_parent || document).querySelectorAll( _selector );
@@ -18,6 +19,43 @@ function intersectObject( target, available )
 
 const intersectArray = (list1, list2, isUnion = false) => list1.filter( list1Item => isUnion === list2.includes(list1Item) );
 
+const storage = Object.defineProperties({}, {
+    username: {
+        enumerable: true,
+        get: () => localStorage.username || "",
+        set: (value) => {
+            if ( value )
+                localStorage.username = value;
+            else
+                delete localStorage.username;
+        },
+    },
+    password: {
+        enumerable: true,
+        set: async (value) => {
+            if ( value && storage.username)
+                localStorage.passhash = await hash( value, storage.username );
+            else
+                delete localStorage.passhash;
+        },
+    },
+    passhash: {
+        get: () => localStorage.passhash || null,
+        enumerable: true,
+    },
+    groups: {
+        enumerable: true,
+        get: () => JSON.parse(localStorage.groups || "[]"),
+        set: (value) => {
+            if (value)
+                localStorage.groups = JSON.stringify(value);
+            else
+                delete localStorage.groups
+        },
+    },
+});
+
+///// Barcode scanner methods /////
 async function startScan()
 {
     // Detect supported types and filter everything that looks like a product
@@ -117,9 +155,7 @@ async function startScan()
     }
 }
 
-async function enableScanner( _event )
-{
-}
+///// Hashing helpers /////
 
 // SHA-512 hash function
 async function hash( _data, _salt )
@@ -142,13 +178,375 @@ function encode64( _buffer )
     return btoa( new Uint8Array( _buffer ).reduce( (s, b) => s + String.fromCharCode( b ), "" ) );
 }
 
-function loggedin( state )
+///// State helpers /////
+function loggedin( _responseData )
 {
-    t( state ? "change_pw" : "register",  {value:$("#register")});
+    const state = _responseData.state === STATE.CHEERS;
+    const register = $("#register");
+    const value = state ? "change_pw" : "register";
+    register.dataset.value = value;
+    t( value, {value:register});
+
     $("#login").disabled = !!state;
     $("#newgroup").style.display = state ? "block" : "none";
+
+    if ( _responseData.state === STATE.CHEERS )
+    {
+        // Success: store passhash and username
+        storage.username = $( "#username" ).value;
+        g_passhash = storage.passhash;
+        
+        mergeGroupData( _responseData.group, location.hash && location.hash.slice( 1 ).split( "/" ))
+    }
+    else
+    {
+        warn( decodeState( _responseData.state ) );
+        storage.password = null;
+    }
+
 }
 
+///// Beer list helpers /////
+async function mergeGroupData( _arrServerGroupIds, _joinGroup )
+{
+        console.log( `Groups: local=${storage.groups.length}, server=${_arrServerGroupIds.length} ${_joinGroup.length > 1 && "join group"}` );
+        
+        // Note that provided groups don't have an amount.
+        const providedGoups = _arrServerGroupIds.map( guid => {
+            return {
+                group: guid,
+                members: [ g_userhash ],
+                name: nls.unknown || "UNKNOWN",
+                beers: {}
+            };
+        } );
+
+        // Did we get an invite?
+        if ( _joinGroup.length > 1 )
+            providedGoups.push( {
+                group: _joinGroup[0],
+                members: [ g_userhash ],
+                token: _joinGroup[1],
+                name: _joinGroup[2] || nls.unknown || "UNKNOWN",
+                beers: {}
+            } );
+
+        // Verify Array of hashes against group
+        providedGoups.forEach( providedGroup => {
+            if ( !storage.groups.find( _group => _group.group === providedGroup.group ) )
+            {
+                // Assign to make sure the setter gets called
+                const groups = storage.groups;
+                groups.push( providedGroup );
+                storage.groups = groups;
+            }
+        } );
+
+        // Make a copy of the group so that sync can manupulate the original group
+        const groupsClone = storage.groups.slice();
+        for ( let n = 0; n < groupsClone.length; ++n)
+        {
+            await syncGroup( groupsClone[n] );
+            await timeout( 10 );
+        }
+}
+
+function addGroup( _groupName )
+{
+    const groups = storage.groups; 
+    const group = {
+        amount: 24,
+        group: crypto.randomUUID(),
+        members: [ g_userhash ],
+        name: _groupName || nls.unknown || "UNKNOWN",
+        beers: {}
+    };
+    groups.push( group );
+    storage.groups = groups;
+    syncGroup( group )
+}
+
+async function syncGroup( _group )
+{
+    // Do a server roundtrip and update the local group accordingly
+    const group = Object.assign( {}, _group );
+    delete group.name;
+
+    // Extract keys (barcodes to hashes) to send to the server
+    group.beers = await Promise.all( Object.keys( group.beers ).map( barcode => hash( barcode ) ) );
+
+    // Provide group data to the server and await response
+    const response = await serverRequest( "groupdata", group );
+
+    const groupIdx = storage.groups.findIndex( groupItem => groupItem.group === group.group );
+    if ( groupIdx === -1 )
+    {
+        console.warn( `group not found: ${group.group}` )
+        return;
+    }
+
+    if ( response.state == STATE.INSUFFICIENT_BEER || response.state == STATE.CHEERS )
+    {
+        // Success? remove any token.
+        // TODO: verify assignment
+        delete storage.groups[groupIdx].token;
+        drawGroup( storage.groups[groupIdx], response.beers || [], response.users|0 );
+    }
+    else
+    {
+        // Error on this group request: remove the group
+        // TODO: filter on specific errors to prevent local data "destruction"
+        console.log( decodeState(response.state) );
+        storage.groups = storage.groups.splice( groupIdx, 1 );
+
+        // Make sure to remove the group from the page
+        $( `#g${_group.group}` )?.remove();
+    }
+}
+
+function drawGroup( _group, _flaggedBeers, _users )
+{
+    let groupDiv = $( `#g${_group.group}` );
+
+    if ( !groupDiv || groupDiv.length === 0 )
+        groupDiv = createGroup( _group.group, _group.name );
+
+    // Set group data
+    $(".name", groupDiv).value = _group.name;
+
+    // Don't know the amount of beers?
+    // You're probably not the originator, soft limit rights
+    if ( !("amount" in _group) )
+        $(".amount", groupDiv).setAttribute( "disabled", true );
+    else
+        $(".amount", groupDiv).value = _group.amount;
+
+    // Handle beers
+    const beerDiv = $(".beers", groupDiv);
+    for ( const barcode in _group.beers )
+        drawBeer( beerDiv, _group.group, barcode, _group.beers[barcode], _flaggedBeers );
+
+    if ( _flaggedBeers )
+    {
+        let span = beerDiv.querySelector( "span" );
+        if ( !span )
+            span = beerDiv.insertAdjacentElement( "afterbegin", document.createElement( "span" ) )
+        if ( _flaggedBeers.length )
+            t( "buy_in_bulk", {textContent: span }, {amount:_users} );
+        else
+            t( "state.1", {textContent: span }, {amount:_users} );
+
+    }
+}
+
+function createGroup( _groupId, _name )
+{
+    const groupDiv = document.createElement( "div" );
+    groupDiv.id = "g"+_groupId;
+    groupDiv.className = "group"
+
+    const name = groupDiv.appendChild( document.createElement( "input" ) );
+    name.className = "name";
+    t("group_name", {placeholder:name});
+
+    name.addEventListener( "change", ( _event ) =>
+    {
+        const groupIdx = storage.groups.findIndex( groupItem => groupItem.group === _groupId );
+        if ( groupIdx !== -1 )
+        {
+            // TODO: implement index setter accessor
+            const groups = storage.groups; 
+            groups[groupIdx].name = _event.target.value;
+            storage.groups = groups;
+            // No roundtrip needed
+            drawGroup( storage.groups[groupIdx], null, null );
+        }
+    } );
+
+    const amount = groupDiv.appendChild( document.createElement( "input" ) )
+    amount.type = "number";
+    amount.className = "amount";
+    t("number_of_unique_beers", {placeholder:amount});
+
+    amount.addEventListener( "change", ( _event ) =>
+    {
+        // Check if numeric
+        if ( !_event.target.value|0 )
+            return;
+
+        const groupIdx = storage.groups.findIndex( groupItem => groupItem.group === _groupId );
+        if ( groupIdx !== -1 )
+        {
+            // TODO: implement index setter accessor
+            const groups = storage.groups; 
+            groups[groupIdx].amount = _event.target.value|0;
+            storage.groups = groups;
+            syncGroup( storage.groups[groupIdx] );
+        }
+    } );
+
+    // AKA share link
+    const inviteLink = groupDiv.appendChild( document.createElement( "button" ) )
+    t("copy_invite_link", {textContent:inviteLink});
+
+    inviteLink.addEventListener( "click", async ( _event ) =>
+    {
+        //https://beersurprise.glitchentertainment.nl/#3badba1b-dd8a-4d90-a0c4-45e991c84b8b/bOcIDykUl3wF2wIa8SH7Gycek2howvmtGX4X45l2WK683VxKeI6U1+JJuhNsRPmtF2w45u73JMcXQkWrFl40gA==/known        
+        
+        const uri = document.location.protocol + 
+            "//" + document.location.host +
+             document.location.pathname +
+             "#" + _groupId +
+             "/" + g_userhash + ( _name ?  "/" + encodeURI( _name ) : "" );
+
+        try
+        {
+            await navigator.clipboard.writeText( uri );
+            warn( t( _name ? "link_copied" : "anonymous_link_copied", {textContent: $("#warning")}), 5 );
+        } catch {
+            warn( t("copy_link_failed",{textContent: $("#warning")}) );
+        }
+    } );
+
+    const refresh = groupDiv.appendChild( document.createElement( "button" ) )
+    t("refresh_group", {textContent:refresh});
+
+    refresh.addEventListener( "click", ( _event ) =>
+    {
+        const group = storage.groups.find( groupItem => groupItem.group === _groupId );
+        if ( group )
+            syncGroup( group );
+    } );
+
+    groupDiv.appendChild( document.createElement( "div" ) ).className = "beers";
+
+    const beercode = groupDiv.appendChild( document.createElement( "input" ) );
+    t("barcode", {placeholder:beercode});
+    beercode.className = "beercode";
+    const beerName = groupDiv.appendChild( document.createElement( "input" ) );
+    t("beer_name", {placeholder:beerName});
+    beerName.className = "beername";
+    const addBeerButton = groupDiv.appendChild( document.createElement( "button" ) );
+    t("add_beer", {textContent:addBeerButton});
+    addBeerButton.addEventListener( "click", async ( _event ) =>
+    {
+        addBeer( _groupId, beercode.value, beerName.value );
+    } );
+
+    // Scan button, if browser supports it
+    if ( "mediaDevices" in navigator )
+    {
+        const scanButton = groupDiv.appendChild( document.createElement( "button" ) );
+        t("scan_barcode", {textContent:scanButton});
+        scanButton.addEventListener( "click", async ( _event ) =>
+        {
+            const barcode = await startScan();
+            if ( barcode )
+                addBeer( _groupId, barcode, beerName.value || t( "scanned_beer" ) );
+        } );
+    }
+
+    $( "#groups" ).appendChild( groupDiv );
+    return groupDiv;
+}
+
+function addBeer( _groupId, _barcode, _beername )
+{
+    if ( !_barcode )
+        return;
+
+    const groupIdx = storage.groups.findIndex( groupItem => groupItem.group === _groupId );
+    if ( groupIdx === -1 )
+        return;
+
+    // TODO: implement index setter accessor
+    const groups = storage.groups; 
+
+    if ( !(_barcode in groups[groupIdx].beers) )
+    {
+        groups[groupIdx].beers[_barcode] = _beername;
+        storage.groups = groups;
+        syncGroup( storage.groups[groupIdx] );
+    }
+    else
+    {
+        // Barcode already in the list
+    }
+}
+
+async function drawBeer( _parent, _groupId, _barcode, _name, _flaggedBeers )
+{
+    // TODO: value?
+    let beerDiv = $( `input[name='${_barcode}']`, _parent );
+
+    if ( !beerDiv || beerDiv.length === 0 )
+        beerDiv = createBeer( _parent, _groupId, _barcode, _name );
+    else
+        beerDiv = beerDiv.parentElement;
+
+    // Set flagged state (only if we got an array)
+    if ( _flaggedBeers )
+    {
+        const barHash = await hash( _barcode );
+        $( "input", beerDiv ).forEach( i => i.style.backgroundColor = _flaggedBeers.includes(barHash) ? "lime" : "" );
+    }
+}
+
+function createBeer( _parent, _groupId, _barcode, _name )
+{
+    const beerItem = _parent.appendChild( document.createElement( "div" ) );
+    const beercode = beerItem.appendChild( document.createElement( "input" ) );
+    beercode.value = _barcode;
+    beercode.name = _barcode;
+    beercode.disabled = true;
+    // Note: if we want to change the barcode, we have to remove the beer
+    
+    const beerName = beerItem.appendChild( document.createElement( "input" ) );
+    beerName.value = _name;
+    beerName.addEventListener( "change", ( _event ) =>
+    {
+        const groupIdx = storage.groups.findIndex( groupItem => groupItem.group === _groupId );
+        if ( groupIdx !== -1 )
+        {
+            // TODO: implement index setter accessor
+            const groups = storage.groups; 
+            groups[groupIdx].beers[_barcode] = _event.target.value;
+            storage.groups = groups;
+            // No roundtrip needed
+            drawBeer( _parent, _groupId, _barcode, _name, null );
+        }
+    } );
+
+    const deleteBeer = beerItem.appendChild( document.createElement( "button" ) );
+    //t("delete_beer",{value:deleteBeer});
+    deleteBeer.textContent = "X";
+
+    deleteBeer.addEventListener( "click", ( _event ) =>
+    {
+        const groupIdx = storage.groups.findIndex( groupItem => groupItem.group === _groupId );
+        if ( groupIdx !== -1 )
+        {
+            beerItem.remove();
+
+            // TODO: implement index setter accessor
+            const groups = storage.groups;
+            delete groups[groupIdx].beers[_barcode];
+            storage.groups = groups;
+            syncGroup( storage.groups[groupIdx] );
+
+        }
+    } );
+
+    document.querySelector( ".beercode" ).value = "";
+    document.querySelector( ".beername" ).value = "";
+    return beerItem;
+}
+
+const timeout = async( _ms ) => {
+    return new Promise( resolve => {
+        setTimeout( resolve, _ms );
+    })
+}
 
 let timer = null;
 function warn( _message, _timeout )
@@ -167,34 +565,50 @@ function decodeState( _state )
     return ( t(`state.${_state}`) );
 }
 
-async function handleCredentials( _passhash, _command )
+///// Login and data helpers /////
+async function handleCredentials( _command )
 {
-    const storedPassHash = localStorage.getItem( "passhash" );
-
     // Sanity check
-    if ( !g_userhash || ( !_passhash && !storedPassHash ) )
+    if ( !g_userhash || !storage.passhash )
     {
         console.error( "no credentials provided: cannot request anything" );
         return;
     }
 
+    let response = null;
     switch ( _command )
     {
         case "login":
-            localStorage.setItem( "passhash", _passhash );
-            handleResponse( await serverRequest( "groupdata", null ) );
+            response = await serverRequest( "groupdata", null );
+            loggedin( response );
             break;
 
         case "register":
-            localStorage.removeItem( "passhash" );
-            handleResponse( await serverRequest( "password", _passhash ) );
+            // Force `null` credentials
+            response = await serverRequest( "password", storage.passhash, null );
+            if ( response.state === STATE.CHEERS )
+            {
+                warn( t("account_created",{textContent: $("#warning")}) );
+
+                // Empty group data will trigger sequential group detail calls
+                response = await serverRequest( "groupdata", null );
+                loggedin( response );
+            }
             break;
 
         default:
-            // Change password
-            handleResponse( await serverRequest( "password", _passhash ) );
+            // Change password, use the previous hash
+            response = await serverRequest( "password", storage.passhash, g_passhash );
+            if ( response.state === STATE.CHEERS )
+            {
+                warn( t("password_updated",{textContent: $("#warning")}) );
+                g_passhash = storage.passhash;
+            }
             break;
     }
+
+    if ( !response.state === STATE.CHEERS )
+        warn( decodeState( response.state ) );
 }
 
 async function submit( event )
@@ -210,9 +624,7 @@ async function submit( event )
         && !confirm( t( "register_username", null, {username:username.value}) ) )
         return false;
 
-    // hash (+salt) password
-    const passhash = await hash( password.value, username.value );
-    handleCredentials( passhash, command );
+    handleCredentials( command );
 
     // Clear password (and replace with the salted hash)
     password.value = "";
@@ -222,19 +634,52 @@ async function submit( event )
 }
 
 let g_userhash = null;
+let g_passhash = null;
 
 async function updateUser( _event )
 {
     const newUsername = _event.target.value;
-    if ( localStorage.getItem( "username" ) !== newUsername )
+    if ( storage.username !== newUsername )
     {
-        localStorage.removeItem( "passhash" );
-        localStorage.setItem( "username", newUsername );
+        storage.password = null;
+        storage.username = newUsername;
         g_userhash = await hash( newUsername );
     }
 }
 
-// i18n / internationalization
+async function serverRequest( _command, _data, _customCredentials = false)
+{
+    const data =
+    {
+        command: _command,
+        userhash: g_userhash,
+        passhash: _customCredentials === false ? storage.passhash : _customCredentials,
+        data: _data
+    };
+
+    const options =
+    {
+        method: "POST",
+        body: JSON.stringify( data ),
+        headers:
+        {
+            "Content-Type": "application/json"
+        }
+    }
+
+    try
+    {
+        // register
+        return (await fetch( ".", options )).json( );
+    }
+    catch( e )
+    {
+        console.warn( "could not parse as json", response );
+        return { state: STATE.MALFOAMED };
+    }
+}
+
+///// i18n / internationalization methods /////
 function t( name, target/*by reference object*/, values )
 {
     const nlsName = nls[name] && nls[name].replace( /\{(.*?)\}/g, (_,t) => { return values[t] } );
@@ -296,35 +741,36 @@ async function loadNls()
     } );
 }
 
+///// Main function /////
 async function initialize( _event )
 {
-    loadNls();
-
-    const username = $( "#username" );
     const account = $( "#account" );
+    const username = $( "#username" );
+    const password = $( "#password" );
     account.addEventListener( "submit", submit );
     username.addEventListener( "change", updateUser );
     username.addEventListener( "keydown", updateUser );
     username.addEventListener( "keyup", updateUser );
+    username.value = storage.username;
+    password.addEventListener( "keyup", (e)=>{if (e.target.value) storage.password = e.target.value} );
+    password.addEventListener( "change", (e)=>{if (e.target.value) storage.password = e.target.value} );
+    // password.addEventListener( "paste", (e)=>{console.log(e)} );
+    // password.addEventListener( "keypress", (e)=>{console.log(e.target.value)} );
 
-    username.value = localStorage.getItem( "username" );
+    loadNls();
 
     // Store user hash (volatile)
     g_userhash = await hash( username.value );
 
     // If we have a stored passhash, try and login (get user groups)
-    if ( localStorage.getItem( "passhash" ) )
+    if ( storage.passhash )
     {
-        // if ( location.hash )
-        // {
-        //     joinGroup( ...location.hash.slice( 1 ).split( "/" ) );
-        // }
-        // else
-        {
-            console.log( "autologin" );
-            // Empty group data will trigger sequential group detail calls
-            handleResponse( await serverRequest( "groupdata", null ) );
-        }
+        console.log( "autologin" );
+        // Empty group data will trigger sequential group detail calls
+        const result = await serverRequest( "groupdata", null );
+
+        // handles groups as well
+        loggedin( result );
     }
     else if ( location.hash )
     {
@@ -333,467 +779,7 @@ async function initialize( _event )
         warn( t("join_as_new_user",{textContent: $("#warning")}), 300 );
     }
 
-    const groups = JSON.parse( localStorage.getItem( "groups" ) || "[]" );
-    groups.forEach( setGroup );
 }
-
-function random( _a, _b )
-{
-    return Math.round( Math.random() * 2 ) - 1;
-}
-
-function flagBeers( _guid, _beers, _users )
-{
-    const beerGroup = $( `#g${_guid} .beers` );
-    const beerInputs = beerGroup.querySelectorAll( "input:nth-of-type(2n-1)" );
-    beerInputs.forEach( async (beerInput) => {
-        const beerHash = await hash( beerInput.value );
-        if ( _beers.includes( beerHash ) )
-            beerInput.style.backgroundColor = beerInput.nextSibling.style.backgroundColor = "lime";
-    } );
-
-    let span = beerGroup.querySelector( "span" );
-    if ( !span )
-        span = beerGroup.insertAdjacentElement( "afterbegin", document.createElement( "span" ) )
-    t( "buy_in_bulk", {textContent: span }, {amount:_users} );
-    
-    span.dataset.textContent = nls.bulk_buy;
-}
-
-async function handleResponse( [ _responseData, _requestData ] )
-{
-    switch ( _requestData.command )
-    {
-        case "groupdata":
-            // Determine "subcommand"
-
-            if ( !_requestData.data )
-            {
-                // login/get groups
-                loggedin( _responseData.state === STATE.CHEERS )
-                if ( _responseData.state === STATE.CHEERS )
-                {
-                    // Success: store passhash and username
-                    localStorage.setItem( "username", $( "#username" ).value );
-                    localStorage.setItem( "passhash", _requestData.passhash );
-
-                    // If we have a group, update immediately
-                    if ( location.hash )
-                        joinGroup( ...location.hash.slice( 1 ).split( "/" ) );
-                    
-                    // Verify Array of hashes against localstorage["groups"].group
-                    console.log( "Number of groups on server:", _responseData.group.length );
-                    
-                    const groups = JSON.parse( localStorage.getItem( "groups" ) || "[]" );                    
-                    _responseData.group.forEach( _guid => {
-                        if ( !groups.find( _group => _group.group === _guid ) )
-                            addGroup( nls.unknown || "UNKNOWN", _guid, true );
-                    } );
-                    
-                    // TODO: verify throttle
-                    groups.forEach( async (_group) => {
-                        // TODO: throttle requests or send as array
-                        await updateGroup( _group );
-                    } );
-                }
-                else
-                {
-                    warn( decodeState( _responseData.state ) );
-                    localStorage.removeItem( "passhash" );
-                }
-            }
-            else
-            {
-                // Set group
-                if ( _responseData.state === STATE.CHEERS )
-                {
-                    // All beers fullfilled, flag them for buying
-                    flagBeers( _requestData.data.group, _responseData.beers, _responseData.users );
-                }
-                else
-                {
-                    if ( _responseData.state === STATE.INSUFFICIENT_BEER )
-                    {
-                        // Set warning inside the group
-                        const beerGroup = $( `#g${_requestData.data.group} .beers` );
-
-                        let span = beerGroup.querySelector( "span" );
-                        if ( !span )
-                            span = beerGroup.insertAdjacentElement( "afterbegin", document.createElement( "span" ) )
-                        span.textContent = decodeState( _responseData.state );
-                    }
-                    else
-                    {
-                        warn( decodeState( _responseData.state ) );
-                    }
-                }
-
-            }
-            break;
-
-        case "password":
-            if ( _responseData.state === STATE.CHEERS )
-            {
-                localStorage.setItem( "passhash", _requestData.data );
-                if ( _requestData.passhash && _requestData.data )
-                    warn( t("password_updated",{textContent: $("#warning")}) );
-                else if ( !_requestData.passhash && _requestData.data )
-                {
-                    // If we have a group, update immediately
-                    if ( location.hash )
-                        joinGroup( ...location.hash.slice( 1 ).split( "/" ) );
-
-                        warn( t("account_created",{textContent: $("#warning")}) );
-                        // TODO: send login request or just load groups
-                        // Empty group data will trigger sequential group detail calls
-                        handleResponse( await serverRequest( "groupdata", null ) );
-                }
-                else
-                    console.warn( t("unknown_success",{textContent: $("#warning")}) );
-            }
-            else
-            {
-                warn( decodeState( _responseData.state ) );
-            }
-            break;
-
-        default:
-            console.warn( "could not decode command: ", _requestData.command );
-            break;
-    }
-    
-    return _responseData;
-}
-
-async function serverRequest( _command, _data )
-{
-    // NOTE: before setting an array, it's best to get the data to prevent data loss
-    // post body data
-    const data =
-    {
-        command: _command,
-        userhash: g_userhash,
-        passhash: localStorage.getItem( "passhash" ),
-        data: _data
-    };
-
-    const options =
-    {
-        method: "POST",
-        body: JSON.stringify( data ),
-        headers:
-        {
-            "Content-Type": "application/json"
-        }
-    }
-
-    // Clean up server response and parse as JSON
-    
-    try
-    {
-        // register
-        const response = await (await fetch( ".", options )).json( );
-        return [ response, data ];
-    }
-    catch( e )
-    {
-        console.warn( "could not parse as json", response );
-        return [ { state: STATE.MALFOAMED }, data ];
-    }
-}
-
-function getOrCreateGroup( _groupName, _guid )
-{
-    const groups = JSON.parse( localStorage.getItem( "groups" ) || "[]" );
-    const storedGroup = groups.find( (g) => g.group === _guid );
-    
-    if ( storedGroup )
-    {
-        console.log( `Existing group ${storedGroup.name} (${_guid})` );
-        delete storedGroup.name;
-        return storedGroup;
-    }
-    
-    console.log( `New group ${_groupName} (${_guid})` );
-
-    const group = {
-        group: _guid,
-        members: [ g_userhash ],
-        name: _groupName
-    };
-
-    groups.push( group );
-    localStorage.setItem( "groups", JSON.stringify( groups ) );
-
-    delete group.name;
-    return group;   
-}
-
-async function joinGroup(guid, token, name)
-{
-    if ( !guid )
-        return;
-    // Create group info (without name)
-    const group = {
-        group: guid,
-        members: [ g_userhash ],
-        token: token
-    };
-
-    const data = await serverRequest( "groupdata", group );
-
-    const unknown = nls.unknown || "UNKNOWN";
-    // Add the group locally, no roundtrip
-    const responseState = data[0].state;
-    if ( responseState === STATE.CHEERS || responseState === STATE.INSUFFICIENT_BEER )
-        addGroup( name ? decodeURI( name ) : unknown, guid, true );
-    handleResponse( data );
-
-    // Remove hash
-    window.location.replace(window.location.protocol + "//" + window.location.host);
-}
-
-function addGroup( _groupName, _guid, _skipServerCall )
-{
-    const guid = _guid ? _guid : crypto.randomUUID();
-    
-    // Create group info (without name)
-    const group = getOrCreateGroup( _groupName, guid );
-    
-    if ( !_skipServerCall )
-        group.amount = 24;
-    
-    // Add the name only locally
-    const myGroup = Object.assign( { name: _groupName }, group );
-
-    // Submit data to server
-    if ( !_skipServerCall )
-        updateGroup( group );
-
-    // TODO: we may want to check if the post went ok
-    setGroup( myGroup );
-}
-
-async function updateGroup( _group )
-{
-    const groups = JSON.parse( localStorage.getItem( "groups" ) || "[]" );
-    const groupIdx = groups.findIndex( (g) => g.group === _group.group );
-
-    if ( groupIdx >= 0 )
-        groups[groupIdx] = _group;
-    else
-        console.warn( "group not found" );    
-
-    localStorage.setItem( "groups", JSON.stringify( groups ) );
-
-    // Submit data to server (remove name from server request)
-    const myGroup = Object.assign( {}, _group );
-    delete myGroup.name;
-
-    if ( myGroup.beers )
-        myGroup.beers = await Promise.all( myGroup.beers.map( beer => hash( beer.barcode ) ) );
-    else
-        myGroup.beers = [];
-    return handleResponse( await serverRequest( "groupdata", myGroup ) );
-}
-
-function setGroup( _group )
-{
-    let groupDiv = $( "#g"+_group.group );
-
-    if ( !groupDiv || groupDiv.length === 0 )
-    {
-        groupDiv = document.createElement( "div" );
-        groupDiv.id = "g"+_group.group;
-        groupDiv.className = "group"
-
-        const name = groupDiv.appendChild( document.createElement( "input" ) );
-        name.className = "name";
-        t("group_name", {placeholder:name});
-
-        name.addEventListener( "change", ( _event ) =>
-        {
-            _group.name = _event.target.value;
-            updateGroup( _group );
-        } );
-
-        const amount = groupDiv.appendChild( document.createElement( "input" ) )
-        amount.type = "number";
-        amount.className = "amount";
-        t("number_of_unique_beers", {placeholder:amount});
-
-        // Don't know the amount of beers?
-        // You're probably not the originator, soft limit rights
-        if ( !_group.amount )
-            amount.setAttribute( "disabled", true );
-        else
-        {
-            amount.addEventListener( "change", ( _event ) =>
-            {
-                if ( _event.target.value|0 )
-                {
-                    _group.amount = _event.target.value;
-                    updateGroup( _group );
-                }
-            } );
-        }
-
-        // AKA share link
-        const inviteLink = groupDiv.appendChild( document.createElement( "button" ) )
-        t("copy_invite_link", {textContent:inviteLink});
-
-        inviteLink.addEventListener( "click", async ( _event ) =>
-        {
-            //https://beersurprise.glitchentertainment.nl/#3badba1b-dd8a-4d90-a0c4-45e991c84b8b/bOcIDykUl3wF2wIa8SH7Gycek2howvmtGX4X45l2WK683VxKeI6U1+JJuhNsRPmtF2w45u73JMcXQkWrFl40gA==/known        
-            
-            const uri = document.location.protocol + 
-                "//" + document.location.host +
-                 document.location.pathname +
-                 "#" + _group.group +
-                 "/" + g_userhash +
-                 "/" + encodeURI( _group.name );
-
-            try
-            {
-                await navigator.clipboard.writeText( uri );
-                warn( t("link_copied",{textContent: $("#warning")}), 5 );
-            } catch {
-                warn( t("copy_link_failed",{textContent: $("#warning")}) );
-            }
-        } );
-
-        const refresh = groupDiv.appendChild( document.createElement( "button" ) )
-        t("refresh_group", {textContent:refresh});
-
-        refresh.addEventListener( "click", ( _event ) =>
-        {
-            updateGroup( _group );
-        } );
-
-        groupDiv.appendChild( document.createElement( "div" ) ).className = "beers";
-
-        const beercode = groupDiv.appendChild( document.createElement( "input" ) );
-        t("barcode", {placeholder:beercode});
-        beercode.className = "beercode";
-        const beerName = groupDiv.appendChild( document.createElement( "input" ) );
-        t("beer_name", {placeholder:beerName});
-        beerName.className = "beername";
-        const addBeerButton = groupDiv.appendChild( document.createElement( "button" ) );
-        t("add_beer", {textContent:addBeerButton});
-        addBeerButton.addEventListener( "click", async ( _event ) =>
-        {
-            addBeer( groupDiv, _group, beercode.value, beerName.value );
-        } );
-
-        // Scan button, if browser supports it
-        if ( "mediaDevices" in navigator )
-        {
-            const scanButton = groupDiv.appendChild( document.createElement( "button" ) );
-            t("scan_barcode", {textContent:scanButton});
-            scanButton.addEventListener( "click", async ( _event ) =>
-            {
-                //add_Beer()
-                const barcode = await startScan();
-                if ( barcode )
-                    addBeer( groupDiv, _group, barcode, t( "scanned_beer" ) );
-            } );
-        }
-
-        $( "#groups" ).appendChild( groupDiv );
-    }
-
-    const name = groupDiv.querySelector( ".name" );
-    const amount = groupDiv.querySelector( ".amount" );
-
-    name.value = _group.name;
-
-    // Skip non-amounts
-    if ( _group.amount )
-        amount.value = _group.amount;
-
-    if ( _group.beers )
-        _group.beers.sort( random ).forEach( ( beer ) => setBeer( groupDiv, beer, _group ) );
-}
-
-async function addBeer( _node, _group, _barcode, _name )
-{
-    if ( !_barcode )
-        return;
-
-    const beer = { barcode: _barcode, name: _name };
-
-    // TODO: check if the beer already is added?
-    if ( !_group.beers )
-        _group.beers = [];
-    _group.beers.push( beer );
-
-    // Submit data to server (remove name from server request)
-    await updateGroup( _group );
-    setBeer( _node, beer, _group );
-}
-
-function setBeer( _node, _beer, _group )
-{
-    const beers = _node.querySelector( ".beers" );
-    
-    // TODO: filter duplicates
-    //beers.querySelectorAll( `input[name='${_beer.barcode}']` )
-    //    beers.querySelectorAll( `input:nth-of-type(2n-1)` )
-
-    const existingInput = beers.querySelector( `input[name="${_beer.barcode}"]` )
-
-    if ( existingInput )
-        return;
-
-    const beerItem = beers.appendChild( document.createElement( "div" ) );
-
-
-
-
-    const beercode = beerItem.appendChild( document.createElement( "input" ) );
-    beercode.value = _beer.barcode;
-    beercode.name = _beer.barcode;
-    beercode.disabled = true;
-    // Note: if we want to change the barcode, we have to remove it
-    
-    const beerName = beerItem.appendChild( document.createElement( "input" ) );
-    beerName.value = _beer.name;
-    beerName.addEventListener( "change", ( _event ) =>
-    {
-        // TODO: only update local storage: no roundtrip
-        //_beer.name = _event.target.value;
-        //updateBeer( _group );
-        //updateGroup( _group )
-    } );
-
-    const deleteBeer = beerItem.appendChild( document.createElement( "button" ) );
-    //t("delete_beer",{value:deleteBeer});
-    deleteBeer.textContent = "X";
-
-    deleteBeer.addEventListener( "click", ( _event ) =>
-    {
-        beerIdx = _group.beers.findIndex( beer => beer.barcode === _beer.barcode );
-        if ( beerIdx >= 0 )
-        {
-            _group.beers.splice( beerIdx, 1 );
-            updateGroup( _group );
-        }
-
-        // Delete beer from group and update group
-        const beerGroup = $( `#g${_group.group} .beers` );
-        const beerInputs = beerGroup.querySelectorAll( "input:nth-of-type(2n-1)" );
-        beerInputs.forEach( (beerInput) => {
-            if ( _beer.barcode === beerInput.value )
-            {
-                beerInput.parentElement.remove();
-            }
-        } );
-    } );
-
-    _node.querySelector( ".beercode" ).value = "";
-    _node.querySelector( ".beername" ).value = "";
-}
-
 
 window.addEventListener( "load", initialize );
 
