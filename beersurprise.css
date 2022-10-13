@@ -121,6 +121,8 @@ input:not([type="submit"]), button
 
 input[type="submit"],button
 {
+    -webkit-appearance: none;
+    color: #232;
     border-color: rgba(255,255,255,0.1);
     border-width: 1px;
     border-bottom-color: rgba(0,0,0,0.1);

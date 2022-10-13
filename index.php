@@ -179,10 +179,10 @@ if ( $_SERVER["REQUEST_METHOD"] == "POST")
 </section>
 
 
-<section id="information" class="collapse">
+<section id="information" class="collapse" tabindex="0">
 <h3>How it works</h3>
 <div>
-This site lets you create a group where you and other group members can enter a list of suggested beers.<br/>
+BeerSurprise is community driven; it lets you create a group where you and other group members can enter a list of suggested beers.<br/>
 Say your group consists of 6 people and want to create a beer advent calendar of 24 beers, each member will have to add more than 4 unique beers (there is actually margin added).<br/>
 After everyone has completed their personal list, the system will provide a set of 4 unique beers for each member one will have to buy (in 6-fold: one set for each member).<br/>
 Wrap them up (mark and group them), put all the member's beers in 6 boxes (preferrably in the same marked order) and enjoy.
@@ -216,7 +216,7 @@ Note: you could mutually agree to choose something different, like wine, cheese,
     </div>
 </section>
 
-<section id="privacy" class="collapse">
+<section id="privacy" class="collapse" tabindex="0">
 <h3>Privacy: what we store</h3>
 <div>
 In short: we don't want your data, but:
@@ -254,7 +254,7 @@ We need <i>some</i> information of you and your group members to make a non-conf
 This website needs JavaScript to make sure no identifyable data is sent across the line; it's used to generate the hashes using the browser's SubtleCrypto digest method.
 </section>
 
-<section id="extra" class="collapse">
+<section id="extra" class="collapse" tabindex="0">
 <h3>Extra notes</h3>
 <div>
 Please note the following:
@@ -269,7 +269,7 @@ Please note the following:
 </div>
 </section>
 
-<section id="glossary" class="collapse">
+<section id="glossary" class="collapse" tabindex="0">
 <h3>Glossary</h3>
 <div>
 <ul>
