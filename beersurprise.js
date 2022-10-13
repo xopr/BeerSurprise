@@ -323,8 +323,10 @@ function drawGroup( _group, _flaggedBeers, _users )
 
     // Handle beers
     const beerDiv = $(".beers", groupDiv);
-    for ( const barcode in _group.beers )
+    const barcodes = Object.keys(_group.beers);
+    barcodes.sort( () => .5 - Math.random() ).forEach( barcode => {
         drawBeer( beerDiv, _group.group, barcode, _group.beers[barcode], _flaggedBeers );
+    } )
 
     if ( _flaggedBeers )
     {
