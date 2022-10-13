@@ -226,8 +226,8 @@ async function mergeGroupData( _arrServerGroupIds, _joinGroup )
             providedGoups.push( {
                 group: _joinGroup[0],
                 members: [ g_userhash ],
-                token: _joinGroup[1],
-                name: _joinGroup[2] || nls.unknown || "UNKNOWN",
+                token: decodeURIComponent(_joinGroup[1]),
+                name: decodeURI(_joinGroup[2]) || nls.unknown || "UNKNOWN",
                 beers: {}
             } );
 
@@ -300,7 +300,7 @@ async function syncGroup( _group )
         storage.groups = storage.groups.splice( groupIdx, 1 );
 
         // Make sure to remove the group from the page
-        $( `#g${_group.group}` )?.remove();
+        document.getElementById(`g${_group.group}` )?.remove();
     }
 }
 
@@ -399,7 +399,7 @@ function createGroup( _groupId, _name )
             "//" + document.location.host +
              document.location.pathname +
              "#" + _groupId +
-             "/" + g_userhash + ( _name ?  "/" + encodeURI( _name ) : "" );
+             "/" + encodeURIComponent(g_userhash) + ( _name ?  "/" + encodeURI( _name ) : "" );
 
         try
         {
