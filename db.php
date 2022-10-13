@@ -107,6 +107,17 @@ function showTable( $db, $table, $deleteButton = false )
         $types[] = $row[2];
     }
 
+    // TODO: move this to a better place (and copy over pragma query)
+    echo "<!--";
+    if ( $table === "usergroupbeers" && count($types) === 2 )
+    {
+        echo "Update table";
+        $db->exec("ALTER TABLE usergroupbeers
+            ADD selected INTEGER DEFAULT 0 NOT NULL
+        ");
+    }
+    echo "-->";
+
     $res = $db->query( "SELECT * FROM ${table}" );
     $cols = $res->numColumns();
     

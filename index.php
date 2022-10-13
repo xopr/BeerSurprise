@@ -58,6 +58,7 @@ try
     $db->exec("CREATE TABLE IF NOT EXISTS usergroupbeers(
         groupuserid INTEGER REFERENCES groupusers(id),
         beer TEXT,
+        selected INTEGER DEFAULT 0 NOT NULL,
         PRIMARY KEY( groupuserid, beer )
     )");
 
