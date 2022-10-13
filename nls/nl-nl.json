@@ -34,5 +34,6 @@
     "refresh_group": "groep vernieuwen",
     "scan_barcode": "streepjescode scannen",
     "scanned_beer": "GESCANNED BIER",
-    "close": "sluiten"
+    "close": "sluiten",
+    "no_credentials": "Geen gebruikersnaam of wachtwoord ingevoerd. Probeer opnieuw."
 }

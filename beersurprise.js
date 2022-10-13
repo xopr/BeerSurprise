@@ -571,6 +571,11 @@ async function handleCredentials( _command )
     // Sanity check
     if ( !g_userhash || !storage.passhash )
     {
+        if ( !storage.passhash )
+        {
+            alert( t("no_credentials") );
+            return;
+        }
         console.error( "no credentials provided: cannot request anything" );
         return;
     }
@@ -717,8 +722,28 @@ async function loadNls()
     window.nlsQueue = [];
     window.nls = {};
 
+    const nlsFiles = await (await fetch("nls/languages.json")).json();
+    const nlsEntries = Object.keys(nlsFiles);
+    const languages = navigator.languages || [navigator.language];
+    let lang;
+    // lang = languages.find( l => nlsEntries.includes(l.toLowerCase()) );
+    lang = nlsEntries.find( e => languages.includes(e.toLowerCase()) );
+
+    //location.search
+    if ( !lang )
+    {
+        console.log( "no full language found" );
+        // lang = languages.find( l => nlsEntries.find( e => e.slice(0,2) === l.slice(0,2)) );
+        lang = nlsEntries.find( e => languages.find( l => e.slice(0,2) === l.slice(0,2)) );
+    }
+    if ( !lang )
+    {
+        console.log( "no language found" );
+        lang = "en-us";
+    }
+
     // Store globally for the dynamic elements
-    const nls = window.nls = await (await fetch("nls/nl-nl.json")).json();
+    const nls = window.nls = await (await fetch(`nls/${nlsFiles[lang]}`)).json();
 
     while ( item = nlsQueue.shift() )
     {

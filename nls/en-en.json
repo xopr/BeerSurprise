@@ -34,5 +34,6 @@
     "refresh_group": "refresh group",
     "scan_barcode": "scan barcode",
     "scanned_beer": "SCANNED BEER",
-    "close": "close"
+    "close": "close",
+    "no_credentials": "No credentials entered. Try again."
 }
