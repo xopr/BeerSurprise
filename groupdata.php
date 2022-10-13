@@ -2,7 +2,8 @@
 if ( __FILE__ === $_SERVER['SCRIPT_FILENAME'] )
     die( "500" );
 
-define( "MARGIN", 1.25 ); // 110% of the requested amount
+define( "DEBUG", false );
+define( "MARGIN", 1.25 ); // 125% of the requested amount
 
 function groupdata($db, $post)
 {
@@ -149,9 +150,12 @@ function groupdata($db, $post)
         }
         
         // Now do some magic and calculate the beers per user (or, INSUFFICIENT_BEER
-        error_reporting(E_ALL);
-        ini_set('display_errors', 1);
-        $result[ "debug" ] = array( );
+        if ( DEBUG )
+        {
+            error_reporting(E_ALL);
+            ini_set('display_errors', 1);
+            $result[ "debug" ] = array( );
+        }
 
         $userBeers = array();
         // empty beer user: 
@@ -173,8 +177,7 @@ function groupdata($db, $post)
         {
             $user = $userBeer["user"];
             $beer = $userBeer["beer"];
-            
-            
+
             if ( !isset( $users[$user] ) )
                 $users[$user] = array();
                 
@@ -219,13 +222,16 @@ function groupdata($db, $post)
             $result[ "beers" ] = array_slice( $personalBeers, 0, $beersPerUser );// undefined index
         }
 
-        $result[ "debug" ] = $userBeers;
-        $result[ "debug" ]["beers"] = $currentUniqueBeers;
-        $result[ "debug" ]["users"] = $userCount;
-        $result[ "debug" ]["amount"] = $requestedAmount;
-        $result[ "debug" ]["userbeers"] = $personalBeerCount;
-        $result[ "debug" ]["userhash"] = $userhash;
-        $result[ "debug" ]["users"] = $users;
+        if ( DEBUG )
+        {
+            $result[ "debug" ] = $userBeers;
+            $result[ "debug" ]["beers"] = $currentUniqueBeers;
+            $result[ "debug" ]["users"] = $userCount;
+            $result[ "debug" ]["amount"] = $requestedAmount;
+            $result[ "debug" ]["userbeers"] = $personalBeerCount;
+            $result[ "debug" ]["userhash"] = $userhash;
+            $result[ "debug" ]["users"] = $users;
+        }
     }
     else
     {
